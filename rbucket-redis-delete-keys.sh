@@ -11,6 +11,7 @@ REDIS_PASSWORD=""  # Add password if needed
 # Function to show usage
 show_usage() {
     echo "Usage: $0 [-h host] [-p port] [-a password] [keys_file.txt] OR $0 [-h host] [-p port] [-a password] key1 key2 key3"
+    echo "       echo 'key1 key2 key3' | $0 [-h host] [-p port] [-a password]"
     echo ""
     echo "Options:"
     echo "  -h host      Redis host (default: $REDIS_HOST)"
@@ -21,6 +22,7 @@ show_usage() {
     echo "  $0 key1 key2 key3"
     echo "  $0 -h localhost -p 6379 key1 key2"
     echo "  $0 -h localhost -p 6379 -a mypassword keys.txt"
+    echo "  echo 'key1 key2 key3' | $0 -h localhost -p 6379"
 }
 
 # Function to delete a single key
@@ -94,9 +96,21 @@ main() {
 
     # Process arguments
     if [[ $# -eq 0 ]]; then
-        echo "Please provide keys to delete or a file containing keys (one per line)"
-        show_usage
-        exit 1
+        # Check if there's input from stdin
+        if [[ ! -t 0 ]]; then
+            echo "Reading keys from stdin..."
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                [[ -z "$line" || "$line" == \#* ]] && continue  # Skip empty lines and comments
+                # Split line into individual keys (space-separated)
+                for key in $line; do
+                    delete_key "$key"
+                done
+            done
+        else
+            echo "Please provide keys to delete or a file containing keys (one per line)"
+            show_usage
+            exit 1
+        fi
     elif [[ $# -eq 1 && -f "$1" ]]; then
         # Reading keys from file
         echo "Reading keys from file: $1"
