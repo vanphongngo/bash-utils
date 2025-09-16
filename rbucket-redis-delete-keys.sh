@@ -10,19 +10,21 @@ REDIS_PASSWORD=""  # Add password if needed
 
 # Function to show usage
 show_usage() {
-    echo "Usage: $0 [-h host] [-p port] [-a password] [keys_file.txt] OR $0 [-h host] [-p port] [-a password] key1 key2 key3"
+    echo "Usage: $0 [-h host] [-p port] [-a password] [-k 'key1 key2 key3'] [keys_file.txt] OR $0 [-h host] [-p port] [-a password] key1 key2 key3"
     echo "       echo 'key1 key2 key3' | $0 [-h host] [-p port] [-a password]"
     echo ""
     echo "Options:"
     echo "  -h host      Redis host (default: $REDIS_HOST)"
     echo "  -p port      Redis port (default: $REDIS_PORT)"
     echo "  -a password  Redis password (optional)"
+    echo "  -k keys      Space-separated keys as a single string (useful with curl)"
     echo ""
     echo "Examples:"
     echo "  $0 key1 key2 key3"
     echo "  $0 -h localhost -p 6379 key1 key2"
     echo "  $0 -h localhost -p 6379 -a mypassword keys.txt"
     echo "  echo 'key1 key2 key3' | $0 -h localhost -p 6379"
+    echo "  curl -s script_url | bash -s -- -h localhost -p 6379 -k 'key1 key2 key3'"
 }
 
 # Function to delete a single key
@@ -70,7 +72,7 @@ main() {
     fi
     
     # Parse command line options
-    while getopts "h:p:a:" opt; do
+    while getopts "h:p:a:k:" opt; do
         case $opt in
             h)
                 REDIS_HOST="$OPTARG"
@@ -80,6 +82,10 @@ main() {
                 ;;
             a)
                 REDIS_PASSWORD="$OPTARG"
+                ;;
+            k)
+                # Keys passed as a single string, space-separated
+                KEYS_STRING="$OPTARG"
                 ;;
             \?)
                 echo "Invalid option: -$OPTARG" >&2
@@ -95,7 +101,13 @@ main() {
     echo "Using Redis connection: $REDIS_HOST:$REDIS_PORT"
 
     # Process arguments
-    if [[ $# -eq 0 ]]; then
+    if [[ -n "$KEYS_STRING" ]]; then
+        # Process keys from -k option (space-separated)
+        echo "Processing keys from -k option..."
+        for key in $KEYS_STRING; do
+            delete_key "$key"
+        done
+    elif [[ $# -eq 0 ]]; then
         # Check if there's input from stdin
         if [[ ! -t 0 ]]; then
             echo "Reading keys from stdin..."
