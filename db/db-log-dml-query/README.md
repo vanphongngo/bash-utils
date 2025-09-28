@@ -5,9 +5,10 @@ This guide walks you through creating and setting up a MySQL log filtering scrip
 ## Overview
 
 The script will:
-- Filter INSERT, UPDATE, DELETE queries from `misacvien.log` (excludes SELECT queries)
+- Filter only **Execute** statements for INSERT, UPDATE, DELETE queries (excludes Prepare statements and SELECT queries)
 - **Auto-detect timezone**: Converts UTC timestamps to +7 timezone if system is UTC, keeps local time if already +7
-- Save filtered queries to date-based files (`misacvien_log_YYYY_MM_DD`)
+- **Generate executable SQL files**: Outputs clean SQL statements with semicolons in `.sql` format
+- Save filtered queries to date-based files (`misacvien_log_YYYY_MM_DD.sql`) ready for execution
 - Safely truncate the original log file to prevent unlimited growth
 - Run automatically every 5 minutes via cron job
 
@@ -43,9 +44,10 @@ else
     TIMEZONE_STATUS="Local timezone $CURRENT_TZ detected, using local time"
 fi
 
-FILTERED_LOG="$LOG_DIR/misacvien_log_$DATE_SUFFIX"
+FILTERED_LOG="$LOG_DIR/misacvien_log_$DATE_SUFFIX.sql"
 TEMP_LOG="$LOG_DIR/temp_filtered_log_$$"
 TEMP_CONVERTED_LOG="$LOG_DIR/temp_converted_log_$$"
+TEMP_SQL_LOG="$LOG_DIR/temp_sql_log_$$"
 LOCK_FILE="$LOG_DIR/.mysql_log_filter.lock"
 
 # Function to log messages
@@ -86,9 +88,28 @@ convert_timestamps() {
     fi
 }
 
+# Function to format Execute statements as valid SQL
+format_as_sql() {
+    local input_file="$1"
+    local output_file="$2"
+
+    while IFS= read -r line; do
+        # Extract SQL from Execute statement: remove connection ID and "Execute" keyword
+        # Pattern: "		   448 Execute	insert into ..." -> "insert into ..."
+        if [[ $line =~ ^[[:space:]]*[0-9]+[[:space:]]+Execute[[:space:]]+(.+)$ ]]; then
+            sql_statement="${BASH_REMATCH[1]}"
+            # Add semicolon if not present and write as valid SQL
+            if [[ ! $sql_statement =~ \;[[:space:]]*$ ]]; then
+                sql_statement="${sql_statement};"
+            fi
+            echo "$sql_statement" >> "$output_file"
+        fi
+    done < "$input_file"
+}
+
 # Function to cleanup on exit
 cleanup() {
-    rm -f "$TEMP_LOG" "$TEMP_CONVERTED_LOG" "$LOCK_FILE"
+    rm -f "$TEMP_LOG" "$TEMP_CONVERTED_LOG" "$TEMP_SQL_LOG" "$LOCK_FILE"
     exit $1
 }
 
@@ -119,22 +140,25 @@ fi
 
 log_message "Starting log filtering process... ($TIMEZONE_STATUS)"
 
-# Filter INSERT, UPDATE, DELETE queries (both Prepare and Execute statements)
-# Using case-insensitive grep to catch variations, but exclude SELECT queries
-grep -iE "^\s*[0-9]*\s+(Prepare|Execute)\s+(insert|update|delete)" "$SOURCE_LOG" > "$TEMP_LOG" 2>/dev/null
+# Filter only Execute statements for INSERT, UPDATE, DELETE queries
+# Exclude Prepare statements to get only executable SQL
+grep -iE "^\s*[0-9]*\s+Execute\s+(insert|update|delete)" "$SOURCE_LOG" > "$TEMP_LOG" 2>/dev/null
 
 # Check if any filtered content was found
 if [ -s "$TEMP_LOG" ]; then
     # Convert timestamps if needed (UTC to +7)
     convert_timestamps "$TEMP_LOG" "$TEMP_CONVERTED_LOG"
 
+    # Format as valid SQL statements
+    format_as_sql "$TEMP_CONVERTED_LOG" "$TEMP_SQL_LOG"
+
     # If filtered log already exists for today, append to it
     if [ -f "$FILTERED_LOG" ]; then
-        cat "$TEMP_CONVERTED_LOG" >> "$FILTERED_LOG"
-        log_message "Appended $(wc -l < "$TEMP_CONVERTED_LOG") lines to existing filtered log: $FILTERED_LOG"
+        cat "$TEMP_SQL_LOG" >> "$FILTERED_LOG"
+        log_message "Appended $(wc -l < "$TEMP_SQL_LOG") SQL statements to existing filtered log: $FILTERED_LOG"
     else
-        mv "$TEMP_CONVERTED_LOG" "$FILTERED_LOG"
-        log_message "Created new filtered log with $(wc -l < "$FILTERED_LOG") lines: $FILTERED_LOG"
+        mv "$TEMP_SQL_LOG" "$FILTERED_LOG"
+        log_message "Created new filtered log with $(wc -l < "$FILTERED_LOG") SQL statements: $FILTERED_LOG"
     fi
 
     # Set appropriate permissions
@@ -234,6 +258,53 @@ cd /var/lib/mysql/misacvien-mysql-log
 nohup ./mysql_log_filter.sh > /dev/null 2>&1 &
 ```
 
+## SQL Output Format
+
+The script generates clean, executable SQL files with the following format:
+
+### Input (MySQL Log)
+```
+		   448 Prepare	insert into `users` (`name`, `email`) values (?, ?)
+		   448 Execute	insert into `users` (`name`, `email`) values ('john', 'john@example.com')
+		   449 Prepare	update `users` set `last_login` = ? where `id` = ?
+		   449 Execute	update `users` set `last_login` = '2025-09-28 17:25:00' where `id` = 123
+```
+
+### Output (SQL File)
+```sql
+insert into `users` (`name`, `email`) values ('john', 'john@example.com');
+update `users` set `last_login` = '2025-09-28 17:25:00' where `id` = 123;
+```
+
+### Usage Examples
+
+**Execute the SQL file directly:**
+```bash
+mysql -u username -p database_name < misacvien_log_2025_09_28.sql
+```
+
+**View SQL statements:**
+```bash
+cat misacvien_log_2025_09_28.sql
+```
+
+**Import into another database:**
+```bash
+mysql -u username -p target_database < misacvien_log_2025_09_28.sql
+```
+
+**Validate SQL syntax:**
+```bash
+mysql -u username -p --execute="source misacvien_log_2025_09_28.sql" database_name
+```
+
+### Key Benefits
+- ✅ **Ready to execute**: No manual editing required
+- ✅ **Clean format**: Removes log metadata and connection IDs
+- ✅ **Proper syntax**: Adds semicolons automatically
+- ✅ **No Prepare statements**: Only actual executed SQL
+- ✅ **No SELECT queries**: Only data modification statements
+
 ## Script Features
 
 ### 🔒 Safety Features
@@ -256,7 +327,7 @@ nohup ./mysql_log_filter.sh > /dev/null 2>&1 &
 
 | File | Description |
 |------|-------------|
-| `misacvien_log_YYYY_MM_DD` | Daily filtered logs containing INSERT/UPDATE/DELETE queries |
+| `misacvien_log_YYYY_MM_DD.sql` | Daily executable SQL files containing INSERT/UPDATE/DELETE statements |
 | `filter_script.log` | Script execution log with timestamps and status |
 | `.mysql_log_filter.lock` | Temporary lock file (auto-removed) |
 
@@ -267,9 +338,14 @@ nohup ./mysql_log_filter.sh > /dev/null 2>&1 &
 tail -f /var/lib/mysql/misacvien-mysql-log/filter_script.log
 ```
 
-### View Today's Filtered Queries
+### View Today's Filtered SQL
 ```bash
-cat /var/lib/mysql/misacvien-mysql-log/misacvien_log_$(date +"%Y_%m_%d")
+cat /var/lib/mysql/misacvien-mysql-log/misacvien_log_$(date +"%Y_%m_%d").sql
+```
+
+### Execute Today's SQL Statements
+```bash
+mysql -u username -p database_name < /var/lib/mysql/misacvien-mysql-log/misacvien_log_$(date +"%Y_%m_%d").sql
 ```
 
 ### Check Original Log Status
@@ -277,21 +353,21 @@ cat /var/lib/mysql/misacvien-mysql-log/misacvien_log_$(date +"%Y_%m_%d")
 ls -la /var/lib/mysql/misacvien-mysql-log/misacvien.log
 ```
 
-### View All Filtered Logs
+### View All SQL Files
 ```bash
-ls -la /var/lib/mysql/misacvien-mysql-log/misacvien_log_*
+ls -la /var/lib/mysql/misacvien-mysql-log/misacvien_log_*.sql
 ```
 
 ## Cleanup & Maintenance
 
-### Archive Old Logs (30+ days)
+### Archive Old SQL Files (30+ days)
 ```bash
-find /var/lib/mysql/misacvien-mysql-log -name "misacvien_log_*" -mtime +30 -delete
+find /var/lib/mysql/misacvien-mysql-log -name "misacvien_log_*.sql" -mtime +30 -delete
 ```
 
-### Compress Old Logs Before Deletion
+### Compress Old SQL Files Before Deletion
 ```bash
-find /var/lib/mysql/misacvien-mysql-log -name "misacvien_log_*" -mtime +7 -exec gzip {} \;
+find /var/lib/mysql/misacvien-mysql-log -name "misacvien_log_*.sql" -mtime +7 -exec gzip {} \;
 ```
 
 ### Remove Lock File (if script hangs)
