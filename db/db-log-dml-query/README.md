@@ -6,6 +6,7 @@ This guide walks you through creating and setting up a MySQL log filtering scrip
 
 The script will:
 - Filter INSERT, UPDATE, DELETE queries from `misacvien.log` (excludes SELECT queries)
+- **Auto-detect timezone**: Converts UTC timestamps to +7 timezone if system is UTC, keeps local time if already +7
 - Save filtered queries to date-based files (`misacvien_log_YYYY_MM_DD`)
 - Safely truncate the original log file to prevent unlimited growth
 - Run automatically every 5 minutes via cron job
@@ -29,9 +30,22 @@ Copy and paste the following script content:
 # Configuration
 LOG_DIR="/var/lib/mysql/misacvien-mysql-log"
 SOURCE_LOG="$LOG_DIR/misacvien.log"
-DATE_SUFFIX=$(date +"%Y_%m_%d")
+
+# Timezone detection and handling
+CURRENT_TZ=$(date +%z)
+if [[ "$CURRENT_TZ" == "+0000" || "$CURRENT_TZ" == "+00" ]]; then
+    # System is in UTC, use +7 timezone for log naming
+    DATE_SUFFIX=$(TZ='Asia/Ho_Chi_Minh' date +"%Y_%m_%d")
+    TIMEZONE_STATUS="UTC detected, using +7 timezone for log naming"
+else
+    # System already has timezone offset, use it as-is
+    DATE_SUFFIX=$(date +"%Y_%m_%d")
+    TIMEZONE_STATUS="Local timezone $CURRENT_TZ detected, using local time"
+fi
+
 FILTERED_LOG="$LOG_DIR/misacvien_log_$DATE_SUFFIX"
 TEMP_LOG="$LOG_DIR/temp_filtered_log_$$"
+TEMP_CONVERTED_LOG="$LOG_DIR/temp_converted_log_$$"
 LOCK_FILE="$LOG_DIR/.mysql_log_filter.lock"
 
 # Function to log messages
@@ -39,9 +53,42 @@ log_message() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_DIR/filter_script.log"
 }
 
+# Function to convert UTC timestamps to +7 timezone
+convert_timestamps() {
+    local input_file="$1"
+    local output_file="$2"
+
+    # Check if we need to convert timestamps (only if system is UTC)
+    if [[ "$CURRENT_TZ" == "+0000" || "$CURRENT_TZ" == "+00" ]]; then
+        # Convert timestamps from UTC to +7
+        while IFS= read -r line; do
+            # Look for timestamp patterns like '2025-09-28 16:24:08'
+            if [[ $line =~ ([0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2}) ]]; then
+                timestamp="${BASH_REMATCH[1]}"
+                # Convert UTC timestamp to +7
+                converted_timestamp=$(TZ='Asia/Ho_Chi_Minh' date -d "$timestamp UTC" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)
+                if [[ $? -eq 0 ]]; then
+                    # Replace the timestamp in the line
+                    converted_line="${line/$timestamp/$converted_timestamp}"
+                    echo "$converted_line" >> "$output_file"
+                else
+                    # If conversion fails, keep original line
+                    echo "$line" >> "$output_file"
+                fi
+            else
+                # No timestamp found, keep line as-is
+                echo "$line" >> "$output_file"
+            fi
+        done < "$input_file"
+    else
+        # No conversion needed, just copy the file
+        cp "$input_file" "$output_file"
+    fi
+}
+
 # Function to cleanup on exit
 cleanup() {
-    rm -f "$TEMP_LOG" "$LOCK_FILE"
+    rm -f "$TEMP_LOG" "$TEMP_CONVERTED_LOG" "$LOCK_FILE"
     exit $1
 }
 
@@ -70,7 +117,7 @@ if [ ! -s "$SOURCE_LOG" ]; then
     exit 0
 fi
 
-log_message "Starting log filtering process..."
+log_message "Starting log filtering process... ($TIMEZONE_STATUS)"
 
 # Filter INSERT, UPDATE, DELETE queries (both Prepare and Execute statements)
 # Using case-insensitive grep to catch variations, but exclude SELECT queries
@@ -78,12 +125,15 @@ grep -iE "^\s*[0-9]*\s+(Prepare|Execute)\s+(insert|update|delete)" "$SOURCE_LOG"
 
 # Check if any filtered content was found
 if [ -s "$TEMP_LOG" ]; then
+    # Convert timestamps if needed (UTC to +7)
+    convert_timestamps "$TEMP_LOG" "$TEMP_CONVERTED_LOG"
+
     # If filtered log already exists for today, append to it
     if [ -f "$FILTERED_LOG" ]; then
-        cat "$TEMP_LOG" >> "$FILTERED_LOG"
-        log_message "Appended $(wc -l < "$TEMP_LOG") lines to existing filtered log: $FILTERED_LOG"
+        cat "$TEMP_CONVERTED_LOG" >> "$FILTERED_LOG"
+        log_message "Appended $(wc -l < "$TEMP_CONVERTED_LOG") lines to existing filtered log: $FILTERED_LOG"
     else
-        mv "$TEMP_LOG" "$FILTERED_LOG"
+        mv "$TEMP_CONVERTED_LOG" "$FILTERED_LOG"
         log_message "Created new filtered log with $(wc -l < "$FILTERED_LOG") lines: $FILTERED_LOG"
     fi
 
@@ -271,6 +321,35 @@ chown mysql:mysql /var/lib/mysql/misacvien-mysql-log/
 chmod 755 /var/lib/mysql/misacvien-mysql-log/
 ```
 
+## Timezone Handling
+
+The script automatically detects and handles timezone conversion:
+
+### How it Works
+- **UTC Detection**: If system timezone is UTC (+0000), timestamps in log entries are converted to +7 timezone (Asia/Ho_Chi_Minh)
+- **Local Timezone**: If system already uses +7 or other timezone, timestamps are kept as-is
+- **Smart Conversion**: Only actual timestamp values in SQL queries are converted, not log metadata
+
+### Examples
+**UTC System (converts timestamps):**
+```
+Original: insert into users (created_at) values ('2025-09-28 10:24:08')
+Filtered: insert into users (created_at) values ('2025-09-28 17:24:08')
+```
+
+**+7 System (keeps timestamps):**
+```
+Original: insert into users (created_at) values ('2025-09-28 17:24:08')
+Filtered: insert into users (created_at) values ('2025-09-28 17:24:08')
+```
+
+### Verification
+Check timezone status in the execution log:
+```bash
+tail /var/lib/mysql/misacvien-mysql-log/filter_script.log
+# Look for: "Local timezone +0700 detected" or "UTC detected"
+```
+
 ## Performance Impact
 
 The script is designed to minimize database performance impact:
@@ -279,6 +358,7 @@ The script is designed to minimize database performance impact:
 - Processes logs quickly with efficient grep filtering
 - Minimal CPU and I/O usage
 - Runs independently of database operations
+- Timezone conversion adds minimal overhead (only when needed)
 
 ## Security Considerations
 
