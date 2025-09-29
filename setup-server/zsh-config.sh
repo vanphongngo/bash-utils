@@ -23,60 +23,36 @@ print_error() {
 print_header() {
     echo -e "${BLUE}================================${NC}"
     echo -e "${BLUE}  ZSH AUTO SETUP SCRIPT${NC}"
+    echo -e "${BLUE}  (Ubuntu Only)${NC}"
     echo -e "${BLUE}================================${NC}"
 }
 
-# Detect OS
-detect_os() {
-    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        if [ -f /etc/debian_version ]; then
-            OS="debian"
-        elif [ -f /etc/redhat-release ]; then
-            OS="redhat"
-        elif [ -f /etc/arch-release ]; then
-            OS="arch"
-        else
-            OS="linux"
+# Check if running on Ubuntu
+check_ubuntu() {
+    if [ ! -f /etc/lsb-release ] || ! grep -q "Ubuntu" /etc/lsb-release; then
+        print_error "This script is designed for Ubuntu only!"
+        print_error "Detected OS: $(uname -s)"
+        if [ -f /etc/os-release ]; then
+            print_error "OS Info: $(grep PRETTY_NAME /etc/os-release | cut -d'"' -f2)"
         fi
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        OS="macos"
-    else
-        OS="unknown"
+        exit 1
     fi
+
+    UBUNTU_VERSION=$(grep DISTRIB_RELEASE /etc/lsb-release | cut -d'=' -f2)
+    print_status "Ubuntu $UBUNTU_VERSION detected"
 }
 
-# Install zsh based on OS
+# Install zsh for Ubuntu
 install_zsh() {
-    print_status "Installing zsh..."
+    print_status "Installing zsh, git, and curl..."
 
-    case $OS in
-        "debian")
-            sudo apt update
-            sudo apt install -y zsh git curl
-            ;;
-        "redhat")
-            if command -v dnf &> /dev/null; then
-                sudo dnf install -y zsh git curl
-            else
-                sudo yum install -y zsh git curl
-            fi
-            ;;
-        "arch")
-            sudo pacman -S --noconfirm zsh git curl
-            ;;
-        "macos")
-            if command -v brew &> /dev/null; then
-                brew install zsh git curl
-            else
-                print_error "Homebrew not found. Please install Homebrew first."
-                exit 1
-            fi
-            ;;
-        *)
-            print_error "Unsupported operating system: $OSTYPE"
-            exit 1
-            ;;
-    esac
+    # Update package list
+    ${SUDO_CMD} apt update
+
+    # Install required packages
+    ${SUDO_CMD} apt install -y zsh git curl wget
+
+    print_status "Packages installed successfully"
 }
 
 # Install Oh My Zsh
@@ -200,10 +176,12 @@ alias gb='git branch'
 alias gd='git diff'
 alias glog='git log --oneline --graph --decorate'
 
-# System aliases
+# System aliases (Ubuntu)
 alias update-system='sudo apt update && sudo apt upgrade -y'
 alias install='sudo apt install'
 alias search='apt search'
+alias autoremove='sudo apt autoremove'
+alias autoclean='sudo apt autoclean'
 alias h='history'
 alias c='clear'
 alias x='exit'
@@ -234,7 +212,7 @@ change_shell() {
     # Add zsh to /etc/shells if not present
     if ! grep -q "$ZSH_PATH" /etc/shells; then
         print_status "Adding zsh to /etc/shells..."
-        echo "$ZSH_PATH" | sudo tee -a /etc/shells
+        echo "$ZSH_PATH" | ${SUDO_CMD} tee -a /etc/shells
     fi
 
     # Change shell for current user
@@ -252,13 +230,13 @@ show_completion_message() {
     print_header
     echo -e "${GREEN}✅ ZSH setup completed successfully!${NC}"
     echo ""
-    echo -e "${BLUE}What was installed:${NC}"
-    echo "  • Zsh shell"
+    echo -e "${BLUE}What was installed on your Ubuntu system:${NC}"
+    echo "  • Zsh shell with git, curl, wget"
     echo "  • Oh My Zsh framework"
-    echo "  • zsh-autosuggestions plugin"
-    echo "  • zsh-syntax-highlighting plugin"
-    echo "  • Powerlevel10k theme"
-    echo "  • Useful aliases and configurations"
+    echo "  • zsh-autosuggestions plugin (auto-completion)"
+    echo "  • zsh-syntax-highlighting plugin (command highlighting)"
+    echo "  • Powerlevel10k theme (modern prompt)"
+    echo "  • Ubuntu-optimized aliases and configurations"
     echo ""
     echo -e "${YELLOW}Next steps:${NC}"
     echo "  1. Log out and log back in (or restart your terminal)"
@@ -276,15 +254,19 @@ show_completion_message() {
 main() {
     print_header
 
-    # Check if running as root
+    # Handle root user
     if [ "$EUID" -eq 0 ]; then
-        print_error "Please do not run this script as root"
-        exit 1
+        print_warning "Running as root user"
+        # Set HOME to root's home directory if not set
+        export HOME=/root
+        # Remove sudo from commands since we're already root
+        SUDO_CMD=""
+    else
+        SUDO_CMD="sudo"
     fi
 
-    # Detect OS
-    detect_os
-    print_status "Detected OS: $OS"
+    # Check Ubuntu
+    check_ubuntu
 
     # Check if zsh is already installed
     if command -v zsh &> /dev/null; then
