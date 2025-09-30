@@ -1,1 +1,0 @@
-curl -s https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server/zsh-config.sh | bash
