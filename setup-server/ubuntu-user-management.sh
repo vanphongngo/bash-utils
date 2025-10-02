@@ -97,3 +97,12 @@ getent passwd | grep "$TARGET" || echo "User $TARGET removed"  # verify removal
 # ====== RECOVERY / MISC ======
 sudo chsh -s /bin/bash root            # if you accidentally set root’s shell wrong, reset to bash
 sudo chown -R "$NEWUSER:$NEWUSER" "/home/$NEWUSER"  # fix ownership of home if needed
+
+getent group                                  # List all existing groups (portable, preferred)
+cut -d: -f1 /etc/group                        # Show only group names from /etc/group
+compgen -g                                    # Bash builtin: list group names (interactive shells)
+getent group | awk -F: '{print $1}' | sort    # All groups, sorted by name
+getent group | sort -t: -k3,3n                # All groups sorted by GID (field 3)
+getent group | wc -l                          # Count how many groups exist
+awk -F: '$3>=1000{print $1}' /etc/group       # Likely human-created groups (GID ≥ 1000)
+getent group | awk -F: '{printf "%-20s GID=%-6s Members=%s\n",$1,$3,$4}'  # Pretty list with GID & members
