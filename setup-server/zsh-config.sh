@@ -20,3 +20,5 @@ source ~/.zshrc
 
 # 7. (Optional) Make zsh your default shell
 chsh -s $(which zsh)
+
+
