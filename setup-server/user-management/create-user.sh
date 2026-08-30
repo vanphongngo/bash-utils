@@ -466,6 +466,28 @@ if [ "$SSH_MODE" != "none" ]; then
       echo "→ Authorised ${key:0:24}… in $AUTH_KEYS"
     fi
   done <<< "$SSH_PUBKEY"
+
+  # Keep the public key on disk under the conventional name too, so
+  # `cat ~/.ssh/id_ed25519.pub` works later — the summary tells you to run it,
+  # and in paste mode nothing had ever written that file.
+  #
+  # In generate mode ssh-keygen already wrote it, and it belongs to the private
+  # half sitting next to it; never overwrite that with a pasted key, or the
+  # pair's own public half is lost.
+  PUBKEY_FILE="$SSH_DIR/id_ed25519.pub"
+  if [ "$SSH_MODE" = "paste" ] && [ -f "$SSH_DIR/id_ed25519" ]; then
+    PUBKEY_FILE="$SSH_DIR/authorized_keys"
+    echo "✓ $SSH_DIR/id_ed25519.pub belongs to the key pair already here;"
+    echo "  the pasted key(s) live in $AUTH_KEYS only."
+  elif [ "$SSH_MODE" = "paste" ]; then
+    # A .pub with no private half beside it is normal here: this is the public
+    # key of your laptop, kept for reference. ssh can still offer it through an
+    # agent; it is not a sign that a private key went missing.
+    printf '%s\n' "$SSH_PUBKEY" > "$PUBKEY_FILE"
+    chown "$TARGET_USER:$TARGET_USER" "$PUBKEY_FILE"
+    chmod 0644 "$PUBKEY_FILE"
+    echo "→ Saved the public key(s) to $PUBKEY_FILE"
+  fi
 fi
 
 # ---- Summary ----------------------------------------------------------------
@@ -507,7 +529,7 @@ if [ "${SSH_MODE:-none}" != "none" ] && [ -n "${SSH_PUBKEY:-}" ]; then
     echo "  sudo -u $TARGET_USER -H ssh -T git@github.com"
   fi
   echo "Read it again later with:"
-  echo "  sudo cat $HOME_DIR/.ssh/id_ed25519.pub"
+  echo "  sudo cat $PUBKEY_FILE"
 fi
 
 if [ "${SSH_MODE:-none}" = "generate" ]; then
