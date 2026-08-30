@@ -7,9 +7,6 @@ setup-server/                  # machine provisioning
 └── user-management/           # everything about user accounts
 ```
 
-`RAW` below is
-`https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server`.
-
 ## setup-server
 
 | Script | Purpose | Run via pipe? |
@@ -21,15 +18,15 @@ setup-server/                  # machine provisioning
 | `file-managment.sh` | Permission / disk-usage reference snippets | no |
 
 ```bash
-curl -fsSL $RAW/zsh-config.sh | bash
-curl -fsSL $RAW/docker-config.sh | bash
-curl -fsSL $RAW/install-nginx.sh | bash
+curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server/zsh-config.sh | bash
+curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server/docker-config.sh | bash
+curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server/install-nginx.sh | bash
 ```
 
 Nginx with TLS (certbot runs only when `DOMAIN` is set):
 
 ```bash
-curl -fsSL $RAW/install-nginx.sh \
+curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server/install-nginx.sh \
   | DOMAIN=example.duckdns.org CERTBOT_EMAIL=you@example.com bash
 ```
 
@@ -54,7 +51,7 @@ when the script itself came down the pipe:
 
 ```bash
 sudo bash setup-server/user-management/create-user.sh
-curl -fsSL $RAW/user-management/create-user.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server/user-management/create-user.sh | sudo bash
 ```
 
 Same thing without prompts (for CI):
@@ -68,7 +65,7 @@ TARGET_USER=deploy USER_PASSWORD='s3cret-pass' PRIVILEGE=deploy SHELL_SETUP=zsh 
 Grant an existing user passwordless sudo for deployments only:
 
 ```bash
-curl -fsSL $RAW/user-management/deploy-sudoers.sh \
+curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server/user-management/deploy-sudoers.sh \
   | TARGET_USER=deploy SERVICES="nginx docker" sudo -E bash
 ```
 
@@ -76,7 +73,16 @@ Delete a user (asks you to re-type the name before anything is removed):
 
 ```bash
 sudo bash setup-server/user-management/delete-user.sh mdeploy
+curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server/user-management/delete-user.sh | sudo bash -s -- mdeploy
+```
+
+`bash -s --` is what passes the username through the pipe; without it the
+argument would be read as a filename for bash itself. Back the home directory
+up first, or leave it in place:
+
+```bash
 BACKUP_DIR=/root/backups sudo -E bash setup-server/user-management/delete-user.sh mdeploy
+REMOVE_HOME=no sudo -E bash setup-server/user-management/delete-user.sh mdeploy
 ```
 
 ### Notes
