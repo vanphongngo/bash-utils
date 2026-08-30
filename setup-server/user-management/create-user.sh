@@ -11,18 +11,17 @@
 #   sudo bash create-user.sh
 #   curl -fsSL <raw-url> | sudo bash
 #
-# Two different keys are set up, in opposite directions:
-#   * SSH login  — the PUBLIC key of the machine you connect FROM goes into
-#                  this account's authorized_keys.
-#   * Git access — a PRIVATE key lives here so the user can clone/push, and its
-#                  public half is printed for you to add to GitHub.
+# The account gets one key pair, and the script prints both halves with the
+# direction spelled out: the PUBLIC half is what you paste into GitHub (or
+# another server's authorized_keys), the PRIVATE half is what your laptop needs
+# in order to log in here.
 #
 # Every answer can also be pre-set, which skips the matching prompt and makes
 # the script usable from CI:
 #   TARGET_USER=deploy USER_PASSWORD='s3cret' PRIVILEGE=deploy SSH_MODE=generate \
 #     sudo -E bash create-user.sh
 #
-# ALLOW_WEAK_PASSWORD=1 bypasses PAM's password-quality check (see step 8).
+# ALLOW_WEAK_PASSWORD=1 bypasses PAM's password-quality check (see step 7).
 # REPO_RAW_URL overrides where the sibling scripts (deploy-sudoers.sh,
 # zsh-config.sh) are fetched from when they are not sitting next to this one
 # (i.e. when this ran from a pipe).
@@ -216,7 +215,7 @@ case "$SHELL_SETUP" in
   *) echo "❌ SHELL_SETUP must be 'bash' or 'zsh'"; exit 1 ;;
 esac
 
-# ---- 5. Inbound SSH — how YOU log in to this server --------------------------
+# ---- 5. SSH key — how YOU log in to this server ------------------------------
 # The public key of the machine you connect FROM goes in authorized_keys here.
 # Its private half never leaves your laptop; that is the whole point of a key
 # pair, and it is why 'paste' is the default rather than 'generate'.
@@ -264,60 +263,14 @@ if [ "$SSH_MODE" = "paste" ] && [ -z "$SSH_PUBKEY" ]; then
   [ -n "$SSH_PUBKEY" ] || { echo "❌ No public key given."; exit 1; }
 fi
 
-# ---- 6. Outbound SSH — how this server reaches GitHub ------------------------
-# A separate key with the opposite direction: the PRIVATE half lives here so
-# the user can clone/push, and the PUBLIC half goes into your GitHub account.
-GITHUB_KEY_MODE="${GITHUB_KEY_MODE:-}"        # generate | paste | none
-GITHUB_PRIVKEY="${GITHUB_PRIVKEY:-}"          # PEM text, for paste mode
-GITHUB_PRIVKEY_FILE="${GITHUB_PRIVKEY_FILE:-}" # or a path to read it from
-GITHUB_HOST="${GITHUB_HOST:-github.com}"      # override for GHE / GitLab
-if [ -z "$GITHUB_KEY_MODE" ]; then
-  if [ "$TTY_OK" -eq 1 ]; then
-    cat <<MENU
-
-Git access — the key this server uses to clone/push on $GITHUB_HOST:
-  1) generate — create a deploy key here; add the PUBLIC half to $GITHUB_HOST
-  2) paste    — paste an existing PRIVATE key you already use for $GITHUB_HOST
-  3) none     — skip (HTTPS clones with a token still work)
-MENU
-    read -r -p "Choose 1-3 [1]: " choice < /dev/tty || true
-    case "${choice:-1}" in
-      1) GITHUB_KEY_MODE=generate ;;
-      2) GITHUB_KEY_MODE=paste ;;
-      3) GITHUB_KEY_MODE=none ;;
-      *) echo "❌ Invalid choice '$choice'"; exit 1 ;;
-    esac
-  else
-    GITHUB_KEY_MODE=none
-  fi
-fi
-
-if [ "$GITHUB_KEY_MODE" = "paste" ] && [ -z "$GITHUB_PRIVKEY" ]; then
-  if [ -n "$GITHUB_PRIVKEY_FILE" ]; then
-    [ -r "$GITHUB_PRIVKEY_FILE" ] || { echo "❌ Cannot read $GITHUB_PRIVKEY_FILE"; exit 1; }
-    GITHUB_PRIVKEY="$(cat "$GITHUB_PRIVKEY_FILE")"
-  else
-    need_tty GITHUB_PRIVKEY
-    echo
-    echo "Paste the PRIVATE key, including the BEGIN/END lines."
-    echo "It ends at '-----END …-----', or type EOF on a line of its own."
-    while IFS= read -r line < /dev/tty; do
-      [ "$line" = "EOF" ] && break
-      GITHUB_PRIVKEY="${GITHUB_PRIVKEY:+$GITHUB_PRIVKEY$'\n'}$line"
-      case "$line" in -----END*) break ;; esac
-    done
-    [ -n "$GITHUB_PRIVKEY" ] || { echo "❌ Empty private key."; exit 1; }
-  fi
-fi
-
 # =============================================================================
 # Apply
 # =============================================================================
 echo
 echo "→ user=$TARGET_USER privilege=$PRIVILEGE shell=$SHELL_SETUP"
-echo "  ssh-login=$SSH_MODE git-key=$GITHUB_KEY_MODE groups=${EXTRA_GROUPS:-<none>}"
+echo "  ssh=$SSH_MODE groups=${EXTRA_GROUPS:-<none>}"
 
-# 7. Create the account. useradd -m (not adduser) because adduser is
+# 6. Create the account. useradd -m (not adduser) because adduser is
 #    interactive and would stall behind its own prompts.
 if [ "$USER_EXISTS" -eq 0 ]; then
   useradd -m -s /bin/bash "$TARGET_USER"
@@ -325,7 +278,7 @@ if [ "$USER_EXISTS" -eq 0 ]; then
 fi
 HOME_DIR="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 
-# 8. Set the password.
+# 7. Set the password.
 #
 #    chpasswd reads user:password on stdin, so nothing sensitive lands in the
 #    process list or the shell history — but it goes through PAM, and Ubuntu's
@@ -399,7 +352,7 @@ if [ -n "$USER_PASSWORD" ]; then
   apply_password || true
 fi
 
-# 9. Groups. usermod -aG appends; without -a it would REPLACE every
+# 8. Groups. usermod -aG appends; without -a it would REPLACE every
 #    supplementary group the user already has.
 if [ -n "$EXTRA_GROUPS" ]; then
   for grp in ${EXTRA_GROUPS//,/ }; do
@@ -412,7 +365,7 @@ if [ -n "$EXTRA_GROUPS" ]; then
   done
 fi
 
-# 10. Privileges.
+# 9. Privileges.
 USER_SLUG="$(printf '%s' "$TARGET_USER" | tr -c 'A-Za-z0-9_-' '-')"
 SUDOERS_FILE="/etc/sudoers.d/90-$USER_SLUG"
 DEPLOY_SUDOERS_FILE="/etc/sudoers.d/90-deploy-$USER_SLUG"   # written by deploy-sudoers.sh
@@ -461,7 +414,7 @@ case "$PRIVILEGE" in
     ;;
 esac
 
-# 11. Login shell.
+# 10. Login shell.
 if [ "$SHELL_SETUP" = "zsh" ]; then
   if ZS="$(fetch_sibling zsh-config.sh)"; then
     # zsh-config.sh installs into $HOME and runs chsh for $USER. Run it as root
@@ -479,7 +432,7 @@ if [ "$SHELL_SETUP" = "zsh" ]; then
   fi
 fi
 
-# 12. SSH login access — public keys go into authorized_keys.
+# 11. SSH key — public keys go into authorized_keys.
 if [ "$SSH_MODE" != "none" ]; then
   SSH_DIR="$HOME_DIR/.ssh"
   AUTH_KEYS="$SSH_DIR/authorized_keys"
@@ -515,75 +468,6 @@ if [ "$SSH_MODE" != "none" ]; then
   done <<< "$SSH_PUBKEY"
 fi
 
-# 13. Git hosting key — the private half stays here so the user can clone/push.
-if [ "$GITHUB_KEY_MODE" != "none" ]; then
-  SSH_DIR="$HOME_DIR/.ssh"
-  install -d -m 0700 -o "$TARGET_USER" -g "$TARGET_USER" "$SSH_DIR"
-  GH_KEY="$SSH_DIR/id_ed25519_${GITHUB_HOST%%.*}"
-
-  if [ "$GITHUB_KEY_MODE" = "generate" ]; then
-    if [ -f "$GH_KEY" ]; then
-      echo "✓ Git key already exists at $GH_KEY — reusing it."
-    else
-      sudo -u "$TARGET_USER" ssh-keygen -t ed25519 -N '' \
-        -C "$TARGET_USER@$(hostname) ($GITHUB_HOST)" -f "$GH_KEY" >/dev/null
-      echo "→ Generated $GH_KEY"
-    fi
-  else
-    # Write with a restrictive umask: ssh refuses a key any group or other can
-    # read, and a world-readable private key is a real leak in the meantime.
-    ( umask 077; printf '%s\n' "$GITHUB_PRIVKEY" > "$GH_KEY" )
-    chown "$TARGET_USER:$TARGET_USER" "$GH_KEY"
-    # Derive the public half rather than asking for it — it is computable.
-    if ! sudo -u "$TARGET_USER" ssh-keygen -y -f "$GH_KEY" > "$GH_KEY.pub.tmp" 2>/dev/null; then
-      rm -f "$GH_KEY" "$GH_KEY.pub.tmp"
-      echo "❌ That private key is unreadable (corrupt, or passphrase-protected)."
-      echo "   A passphrase-protected key cannot be used unattended anyway."
-      exit 1
-    fi
-    mv "$GH_KEY.pub.tmp" "$GH_KEY.pub"
-    chown "$TARGET_USER:$TARGET_USER" "$GH_KEY.pub"
-    chmod 0644 "$GH_KEY.pub"
-    echo "→ Installed the pasted key at $GH_KEY"
-  fi
-  chmod 0600 "$GH_KEY"
-
-  # Pin the key to the host, so git uses it regardless of what else is in
-  # ~/.ssh. IdentitiesOnly stops ssh offering every other key first and
-  # tripping the server's MaxAuthTries.
-  SSH_CFG="$SSH_DIR/config"
-  touch "$SSH_CFG"
-  if ! grep -qE "^Host[[:space:]]+$GITHUB_HOST\b" "$SSH_CFG"; then
-    cat >> "$SSH_CFG" <<EOF
-Host $GITHUB_HOST
-    HostName $GITHUB_HOST
-    User git
-    IdentityFile $GH_KEY
-    IdentitiesOnly yes
-EOF
-    echo "→ Added a '$GITHUB_HOST' block to $SSH_CFG"
-  else
-    echo "✓ $SSH_CFG already has a '$GITHUB_HOST' block"
-  fi
-  chown "$TARGET_USER:$TARGET_USER" "$SSH_CFG"
-  chmod 0600 "$SSH_CFG"
-
-  # Pre-seed the host key, otherwise the first clone stops on an interactive
-  # "authenticity of host … can't be established" prompt — fatal in CI.
-  KNOWN="$SSH_DIR/known_hosts"
-  touch "$KNOWN"
-  if ! ssh-keygen -F "$GITHUB_HOST" -f "$KNOWN" >/dev/null 2>&1; then
-    if ssh-keyscan -t rsa,ecdsa,ed25519 "$GITHUB_HOST" >> "$KNOWN" 2>/dev/null; then
-      echo "→ Added $GITHUB_HOST host keys to $KNOWN"
-    else
-      echo "⚠️  Could not reach $GITHUB_HOST to fetch its host key; the first"
-      echo "    clone will ask to confirm the fingerprint."
-    fi
-  fi
-  chown "$TARGET_USER:$TARGET_USER" "$KNOWN"
-  chmod 0644 "$KNOWN"
-fi
-
 # ---- Summary ----------------------------------------------------------------
 echo
 echo "==============================================================="
@@ -613,8 +497,15 @@ if [ "${SSH_MODE:-none}" != "none" ] && [ -n "${SSH_PUBKEY:-}" ]; then
   printf '%s\n' "$SSH_PUBKEY"
   echo "---------------------------------------------------------------"
   echo "Already installed in $HOME_DIR/.ssh/authorized_keys on THIS server."
-  echo "Copy it to any OTHER machine '$TARGET_USER' must reach — append it to"
-  echo "~/.ssh/authorized_keys there, or add it as a GitHub/GitLab deploy key."
+  if [ "$SSH_MODE" = "generate" ]; then
+    echo "This is the key pair belonging to $TARGET_USER, so paste the line"
+    echo "above wherever this account needs to reach:"
+    echo "  GitHub, all repos:  https://github.com/settings/keys"
+    echo "  GitHub, one repo:   repo → Settings → Deploy keys (tick 'Allow write')"
+    echo "  Another server:     append it to ~/.ssh/authorized_keys there"
+    echo "Then test the git access as the user:"
+    echo "  sudo -u $TARGET_USER -H ssh -T git@github.com"
+  fi
   echo "Read it again later with:"
   echo "  sudo cat $HOME_DIR/.ssh/id_ed25519.pub"
 fi
@@ -635,19 +526,6 @@ if [ "${SSH_MODE:-none}" = "generate" ]; then
   echo "Connect with:  ssh -i ~/.ssh/${TARGET_USER}_ed25519 $TARGET_USER@<server-ip>"
   echo "Once it works, delete the private key here:"
   echo "  sudo rm $HOME_DIR/.ssh/id_ed25519"
-fi
-
-if [ "${GITHUB_KEY_MODE:-none}" != "none" ]; then
-  echo
-  echo "$GITHUB_HOST key — add this PUBLIC half to $GITHUB_HOST:"
-  echo "---------------------------------------------------------------"
-  cat "$HOME_DIR/.ssh/id_ed25519_${GITHUB_HOST%%.*}.pub"
-  echo "---------------------------------------------------------------"
-  echo "  Account-wide:  https://$GITHUB_HOST/settings/keys"
-  echo "  One repo only: repo → Settings → Deploy keys (tick 'Allow write' to push)"
-  echo "Then test it as the user:"
-  echo "  sudo -u $TARGET_USER -H ssh -T git@$GITHUB_HOST"
-  echo "  sudo -u $TARGET_USER -H git clone git@$GITHUB_HOST:<owner>/<repo>.git"
 fi
 
 echo "✅ Done. Log out and back in for new group membership to take effect."
