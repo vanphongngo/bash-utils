@@ -1,0 +1,27 @@
+# Secrets / credentials — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+*.crt
+authorized_keys
+known_hosts
+secrets.*
+credentials.*
+
+# AI assistant session transcripts (contain local paths, usernames, and
+# whatever was pasted into the session)
+.specstory/
+
+# macOS / editor noise
+.DS_Store
+._*
+.idea/
+.vscode/
+*.swp
+.specstory
