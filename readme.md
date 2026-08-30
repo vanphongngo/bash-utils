@@ -15,12 +15,31 @@ setup-server/                  # machine provisioning
 | `zsh-config-revert.sh` | Undo the above, restore `/bin/bash` | yes (`sudo`) |
 | `docker-config.sh` | Docker Engine, CLI, containerd, compose plugin | yes |
 | `install-nginx.sh` | Nginx, default vhost, optional certbot TLS | yes |
+| `install-nvm.sh` | nvm + a Node.js release (per-user, no sudo) | yes |
+| `install-claude-code.sh` | Claude Code CLI, native installer or npm | yes |
 | `file-managment.sh` | Permission / disk-usage reference snippets | no |
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server/zsh-config.sh | bash
 curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server/docker-config.sh | bash
 curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server/install-nginx.sh | bash
+```
+
+Node via nvm, then Claude Code (both install into `$HOME` — run them as the
+user who will use them, **without** `sudo`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server/install-nvm.sh | bash
+curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server/install-claude-code.sh | bash
+```
+
+Pin the nvm release or the Node version, or force an install method:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server/install-nvm.sh \
+  | NVM_VERSION=v0.40.3 NODE_VERSION=22 bash
+curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-server/install-claude-code.sh \
+  | INSTALL_METHOD=npm bash
 ```
 
 Nginx with TLS (certbot runs only when `DOMAIN` is set):
@@ -91,6 +110,18 @@ curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-s
   them is safe.
 - `zsh-config.sh` and `docker-config.sh` change your login shell / groups; log
   out and back in for those to take effect.
+- `install-nvm.sh` and `install-claude-code.sh` install into `$HOME`, so run
+  them as the target user, not under `sudo` (they still call `sudo apt-get` for
+  the few system packages they need). Both append to `~/.bashrc` and `~/.zshrc`
+  only when the line is not already there, so a new shell is needed afterwards.
+  `NODE_VERSION` accepts `--lts` (default), a major (`22`) or an exact version;
+  set it to an empty string to install nvm alone.
+- `install-claude-code.sh` defaults to the native installer
+  (`https://claude.ai/install.sh`, no Node required) and falls back to
+  `npm install -g @anthropic-ai/claude-code`. It sources an nvm install if one
+  exists, so running it after `install-nvm.sh` in the same session finds `npm`.
+  Authentication is a one-time browser login on first `claude` run — nothing is
+  configured by the script.
 - `create-user.sh` is the one script that asks questions; it prompts on
   `/dev/tty`, so piping it into `sudo bash` still works. Set `TARGET_USER`,
   `USER_PASSWORD`, `PRIVILEGE` (`basic` / `deploy` / `sudo` / `sudo-nopass`),
