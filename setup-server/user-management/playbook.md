@@ -12,6 +12,9 @@ right thing, with validation and idempotency:
 | Grant passwordless sudo for deployments | `deploy-sudoers.sh` |
 | Delete a user and clean up after it | `delete-user.sh` |
 
+This directory (`setup-server/user-management/`) holds everything about user
+accounts; the provisioning installers live one level up in `setup-server/`.
+
 > This file replaces `ubuntu-user-management.sh`. That was a shell script whose
 > every line had to stay commented out so that piping it into `bash` would not
 > delete users and files — a document pretending to be a script. It is a

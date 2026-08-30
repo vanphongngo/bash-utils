@@ -10,8 +10,9 @@ independent artifact that is read, copied, or piped into `bash` on a target
 machine.
 
 ```
-readme.md              # index of every script + copy-paste run commands
-setup-server/          # Ubuntu server provisioning suite
+readme.md                        # index of every script + copy-paste run commands
+setup-server/                    # Ubuntu server provisioning suite
+setup-server/user-management/    # user accounts: create, delete, sudoers, playbook
 ```
 
 ## Two kinds of file — know which one you are editing
@@ -19,14 +20,18 @@ setup-server/          # Ubuntu server provisioning suite
 This distinction drives almost every decision here.
 
 **1. Installers** — meant to be executed, usually via `curl … | bash`:
-`zsh-config.sh`, `docker-config.sh`, `install-nginx.sh`, `zsh-config-revert.sh`.
+`zsh-config.sh`, `docker-config.sh`, `install-nginx.sh`, `zsh-config-revert.sh`,
+and everything in `user-management/`.
 
 **2. Cheat sheets** — reference collections of commands that are *not* meant to
-run top-to-bottom: `ubuntu-user-management.sh`, `file-managment.sh`.
-`ubuntu-user-management.sh` mixes account creation with `userdel -r` and
-`find / -exec rm`, so it `exit 0`s immediately and keeps every command
-commented out. **Never "fix" it by uncommenting the commands to make it
-runnable** — that would make piping it into bash destroy a machine.
+run top-to-bottom: `file-managment.sh`.
+
+A reference collection of commands is a **document**, not a script. There used
+to be an `ubuntu-user-management.sh` whose every line had to stay commented out
+(it mixed account creation with `userdel -r` and `find / -exec rm`) so that
+piping it into bash would not destroy a machine. It is now
+`user-management/playbook.md`. Write new references as Markdown; do not
+resurrect the commented-out-shell-script pattern.
 
 ## Conventions for installers
 
@@ -62,6 +67,10 @@ Never use `USER` or `GROUPS` as your own variables:
   fails outright and leaves the value unusable.
 
 Use `TARGET_USER` / `EXTRA_GROUPS` instead. This was a real bug in this repo.
+Setting them in the *environment of a child process*
+(`HOME=… USER=… bash zsh-config.sh`) is fine and is how `create-user.sh` runs
+the other scripts against a different account — the rule is about assigning to
+them and then using them as your own variables.
 
 ## Verifying changes
 
@@ -69,8 +78,8 @@ There is no test suite and the scripts target Ubuntu, so they cannot be
 executed on a macOS dev machine. Before finishing:
 
 ```bash
-bash -n setup-server/*.sh        # syntax check — always run this
-shellcheck setup-server/*.sh     # if available (not installed by default)
+bash -n setup-server/*.sh setup-server/user-management/*.sh   # always run this
+shellcheck setup-server/*.sh setup-server/user-management/*.sh  # if available
 ```
 
 Beyond that, review by reading: trace the script as if stdin were closed and
@@ -79,7 +88,13 @@ confirm idempotency.
 
 ## When adding a script
 
-Put it in a topic directory (`setup-server/`, or a new one), follow the
-installer conventions above, and add a row to the table in `readme.md` plus a
-`curl` example if it is pipe-safe. Mark it clearly in both the header comment
-and the readme if it is a cheat sheet rather than an installer.
+Put it in a topic directory (`setup-server/`, `setup-server/user-management/`,
+or a new one), follow the installer conventions above, and add a row to the
+matching table in `readme.md` plus a `curl` example if it is pipe-safe. A new
+reference collection goes in as Markdown, not as a shell script.
+
+Scripts that call each other (`create-user.sh` → `deploy-sudoers.sh`,
+`zsh-config.sh`) must keep working when the caller arrived through a pipe: with
+no file on disk, `BASH_SOURCE` is unset — which `set -u` makes fatal — so guard
+it with `${BASH_SOURCE[0]:-}` and fall back to fetching the callee from
+`REPO_RAW_URL`.
