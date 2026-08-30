@@ -67,6 +67,10 @@ sudo bash setup-server/zsh-config-revert.sh
   `/dev/tty`, so piping it into `sudo bash` still works. Set `TARGET_USER`,
   `USER_PASSWORD`, `PRIVILEGE` (`basic` / `deploy` / `sudo` / `sudo-nopass`),
   `EXTRA_GROUPS` and `SSH_MODE` (`generate` / `paste` / `none`) to skip prompts.
+  If PAM's quality check rejects the password (`BAD PASSWORD: … fails the
+  dictionary check`), the script re-prompts instead of aborting; set
+  `ALLOW_WEAK_PASSWORD=1` to bypass the check via a pre-hashed `chpasswd -e`.
+  Re-running it against a half-configured account finishes the job.
 - `deploy-sudoers.sh` writes a validated file under `/etc/sudoers.d` (checked
   with `visudo -cf` before install) and hands `/var/www` to the user rather
   than granting `sudo chown`/`rm` on it. Passwordless `docker` is

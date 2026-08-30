@@ -15,6 +15,8 @@
 # the script usable from CI:
 #   TARGET_USER=deploy USER_PASSWORD='s3cret' PRIVILEGE=deploy SSH_MODE=generate \
 #     sudo -E bash create-user.sh
+#
+# ALLOW_WEAK_PASSWORD=1 bypasses PAM's password-quality check (see step 6).
 
 set -euo pipefail
 
@@ -105,6 +107,8 @@ elif [ "$USER_EXISTS" -eq 1 ]; then
     echo "→ Keeping the current password."
   fi
 else
+  echo "(the system password policy usually wants 12+ chars, mixed case and"
+  echo " digits, and rejects dictionary words — see ALLOW_WEAK_PASSWORD)"
   ask_secret USER_PASSWORD "Password for $TARGET_USER"
 fi
 
@@ -186,11 +190,78 @@ if [ "$USER_EXISTS" -eq 0 ]; then
 fi
 HOME_DIR="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 
-# 6. Set the password. chpasswd reads user:password on stdin, so nothing
-#    sensitive ever lands in the process list or shell history.
+# 6. Set the password.
+#
+#    chpasswd reads user:password on stdin, so nothing sensitive lands in the
+#    process list or the shell history — but it goes through PAM, and Ubuntu's
+#    pam_pwquality rejects weak passwords *even when root sets them*
+#    ("BAD PASSWORD: … fails the dictionary check"). That is a non-zero exit,
+#    which under `set -e` used to abort the script with the account already
+#    created and nothing else configured. Handle it instead of dying on it.
+PASSWORD_SET=0
+
+hash_password() {   # print a SHA-512 crypt hash of stdin
+  if command -v openssl >/dev/null 2>&1; then
+    openssl passwd -6 -stdin
+  elif command -v mkpasswd >/dev/null 2>&1; then
+    mkpasswd -m sha-512 -s
+  elif command -v python3 >/dev/null 2>&1; then
+    # crypt was removed in Python 3.13; harmless if this branch is unreachable.
+    python3 -c 'import crypt,sys; print(crypt.crypt(sys.stdin.readline().rstrip("\n"), crypt.mksalt(crypt.METHOD_SHA512)))'
+  else
+    return 1
+  fi
+}
+
+try_chpasswd() {    # returns non-zero and prints PAM's reason on rejection
+  local out
+  if out="$(printf '%s:%s' "$TARGET_USER" "$1" | chpasswd 2>&1)"; then
+    return 0
+  fi
+  printf '%s\n' "$out" | sed 's/^/  /'
+  return 1
+}
+
+apply_password() {
+  while :; do
+    if try_chpasswd "$USER_PASSWORD"; then
+      echo "→ Password set"
+      PASSWORD_SET=1
+      return 0
+    fi
+
+    if [ "${ALLOW_WEAK_PASSWORD:-0}" = "1" ]; then
+      # chpasswd -e takes an already-hashed password, which skips PAM entirely.
+      local hash
+      if hash="$(printf '%s\n' "$USER_PASSWORD" | hash_password)" \
+         && printf '%s:%s' "$TARGET_USER" "$hash" | chpasswd -e; then
+        echo "→ Password set (ALLOW_WEAK_PASSWORD=1 — quality check bypassed)"
+        PASSWORD_SET=1
+        return 0
+      fi
+      echo "⚠️  Could not hash the password (no openssl/mkpasswd/python3)."
+      return 1
+    fi
+
+    if [ "$TTY_OK" -eq 1 ]; then
+      echo "  ↑ rejected by the system password policy. Pick a stronger one,"
+      echo "    or re-run with ALLOW_WEAK_PASSWORD=1 to bypass the check."
+      USER_PASSWORD=""
+      ask_secret USER_PASSWORD "Password for $TARGET_USER"
+      continue
+    fi
+
+    echo "⚠️  Password rejected by the policy and no terminal to retry on."
+    echo "    Re-run with a stronger USER_PASSWORD, or ALLOW_WEAK_PASSWORD=1."
+    return 1
+  done
+}
+
 if [ -n "$USER_PASSWORD" ]; then
-  printf '%s:%s' "$TARGET_USER" "$USER_PASSWORD" | chpasswd
-  echo "→ Password set"
+  # `|| true`: a password that cannot be set is worth a warning, not an abort —
+  # the rest of the setup (groups, sudoers, SSH key) still needs to happen, and
+  # key-based login works fine against an account with no usable password.
+  apply_password || true
 fi
 
 # 7. Groups. usermod -aG appends; without -a it would REPLACE every
@@ -296,6 +367,14 @@ echo "==============================================================="
 id "$TARGET_USER"
 echo "home:  $HOME_DIR"
 echo "shell: $(getent passwd "$TARGET_USER" | cut -d: -f7)"
+if [ "$PASSWORD_SET" -eq 1 ]; then
+  echo "pass:  set"
+elif [ -n "$USER_PASSWORD" ]; then
+  echo "pass:  NOT SET — policy rejected it; SSH key login still works,"
+  echo "       but 'sudo' with a password and console login will not."
+else
+  echo "pass:  unchanged"
+fi
 for f in "$SUDOERS_FILE" "$DEPLOY_SUDOERS_FILE"; do
   [ -f "$f" ] && echo "sudo:  $f"
 done || true
