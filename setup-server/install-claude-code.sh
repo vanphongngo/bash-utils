@@ -21,9 +21,32 @@ if [ "$(id -u)" -eq 0 ] && [ "$HOME" = "/root" ]; then
   echo "   Run it as your normal user instead, or via: sudo -u <user> -H bash …"
 fi
 
-# 1. Prerequisites
-sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates git ripgrep
+# 1. Prerequisites. Only invoke sudo when a tool is actually missing: under
+#    `curl | bash` an account with no usable password cannot answer a prompt,
+#    and curl/git are already there on a stock Ubuntu. ripgrep is optional —
+#    Claude Code ships its own copy — so a failure to install it is not fatal.
+ensure_packages() {
+  local missing=()
+  for cmd in "$@"; do
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+  done
+  [ ${#missing[@]} -eq 0 ] && { echo "✓ prerequisites already installed: $*"; return 0; }
+
+  local SUDO=""
+  if [ "$(id -u)" -ne 0 ]; then
+    if sudo -n true 2>/dev/null; then
+      SUDO="sudo"
+    else
+      echo "❌ Missing: ${missing[*]} — and this account cannot use sudo without a password."
+      echo "   Install them once as root, then re-run this script:"
+      echo "     sudo apt-get update && sudo apt-get install -y ${missing[*]}"
+      exit 1
+    fi
+  fi
+  $SUDO apt-get update
+  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
+}
+ensure_packages curl git
 
 # 2. Pick up an nvm-managed node, if there is one, so `npm` is visible even
 #    though this non-login shell never sourced the user's rc files.
@@ -50,8 +73,12 @@ install_npm() {
   prefix="$(npm prefix -g)"
   if [ -w "$prefix" ]; then
     npm install -g @anthropic-ai/claude-code
-  else
+  elif sudo -n true 2>/dev/null; then
     sudo -E env "PATH=$PATH" npm install -g @anthropic-ai/claude-code
+  else
+    echo "✗ npm prefix '$prefix' is not writable and sudo needs a password." >&2
+    echo "  Install Node with install-nvm.sh first, or use INSTALL_METHOD=native." >&2
+    return 1
   fi
 }
 

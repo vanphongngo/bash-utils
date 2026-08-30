@@ -15,9 +15,33 @@ if [ "$(id -u)" -eq 0 ] && [ "$HOME" = "/root" ]; then
   echo "⚠️  Running as root — nvm will be installed into /root/.nvm, not your login user."
 fi
 
-# 1. Prerequisites (the nvm installer needs curl/git; node builds nothing here)
-sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y curl git ca-certificates
+# 1. Prerequisites (the nvm installer needs curl/git; node builds nothing here).
+#    Only reach for sudo when something is actually missing — under `curl | bash`
+#    an account with no usable password cannot answer a sudo prompt, and these
+#    packages are present on a stock Ubuntu anyway.
+ensure_packages() {
+  local missing=()
+  for cmd in "$@"; do
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+  done
+  [ ${#missing[@]} -eq 0 ] && { echo "✓ prerequisites already installed: $*"; return 0; }
+
+  local SUDO=""
+  if [ "$(id -u)" -ne 0 ]; then
+    # -n: fail immediately rather than hanging on (or bombing out at) a prompt.
+    if sudo -n true 2>/dev/null; then
+      SUDO="sudo"
+    else
+      echo "❌ Missing: ${missing[*]} — and this account cannot use sudo without a password."
+      echo "   Install them once as root, then re-run this script:"
+      echo "     sudo apt-get update && sudo apt-get install -y ${missing[*]}"
+      exit 1
+    fi
+  fi
+  $SUDO apt-get update
+  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
+}
+ensure_packages curl git
 
 # 2. Install nvm (idempotent: the installer updates an existing checkout, and
 #    it appends its snippet to the login profile only when it is not there yet)

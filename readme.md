@@ -116,6 +116,11 @@ curl -fsSL https://raw.githubusercontent.com/vanphongngo/bash-utils/main/setup-s
   only when the line is not already there, so a new shell is needed afterwards.
   `NODE_VERSION` accepts `--lts` (default), a major (`22`) or an exact version;
   set it to an empty string to install nvm alone.
+- Neither of them calls `sudo` unless a prerequisite is genuinely missing, and
+  they probe with `sudo -n true` first — an account that cannot sudo without a
+  password gets a clear message naming the packages to install as root, instead
+  of a sudo failure from inside the pipe (`curl | bash` gives sudo no reliable
+  way to prompt).
 - `install-claude-code.sh` defaults to the native installer
   (`https://claude.ai/install.sh`, no Node required) and falls back to
   `npm install -g @anthropic-ai/claude-code`. It sources an nvm install if one
